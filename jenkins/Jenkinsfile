@@ -1,0 +1,136 @@
+pipeline {
+    agent any
+
+    environment {
+        AWS_DEFAULT_REGION = 'ap-south-1'
+        REPO_URL = 'https://github.com/praneshkA/devops-2tier-cicd.git'
+        DB_NAME = 'devopsdb'
+    }
+
+    stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
+        stage('Checkout Code') {
+            steps {
+                git branch: 'main', url: "${REPO_URL}"
+            }
+        }
+
+        stage('Terraform Init') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir('terraform') {
+                        bat 'terraform init -input=false'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Validate') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir('terraform') {
+                        bat 'terraform validate'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Plan') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir('terraform') {
+                        bat 'terraform plan -out=tfplan'
+                    }
+                }
+            }
+        }
+
+        stage('Terraform Apply') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir('terraform') {
+                        bat 'terraform apply -auto-approve tfplan'
+                    }
+                }
+            }
+        }
+
+        stage('Read Terraform Outputs') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key-id', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-access-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    dir('terraform') {
+                        script {
+                            env.EC2_PUBLIC_IP = bat(
+                                script: 'terraform output -raw ec2_public_ip',
+                                returnStdout: true
+                            ).trim()
+
+                            env.RDS_ENDPOINT = bat(
+                                script: 'terraform output -raw rds_endpoint',
+                                returnStdout: true
+                            ).trim()
+
+                            env.RDS_HOST = env.RDS_ENDPOINT.replace(':3306', '')
+
+                            echo "EC2 Public IP: ${env.EC2_PUBLIC_IP}"
+                            echo "RDS Host: ${env.RDS_HOST}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Deploy Application to EC2') {
+            steps {
+                withCredentials([
+                    string(credentialsId: 'db-user', variable: 'DB_USER'),
+                    string(credentialsId: 'db-password', variable: 'DB_PASSWORD')
+                ]) {
+                    sshagent(credentials: ['ec2-ssh-key']) {
+                        bat """
+                        ssh -o StrictHostKeyChecking=no ubuntu@%EC2_PUBLIC_IP% "export DB_HOST='%RDS_HOST%'; export DB_USER='%DB_USER%'; export DB_PASSWORD='%DB_PASSWORD%'; export DB_NAME='%DB_NAME%'; if [ ! -d ~/devops-2tier-cicd ]; then git clone %REPO_URL% ~/devops-2tier-cicd; fi; cd ~/devops-2tier-cicd; git pull origin main; chmod +x scripts/deploy.sh; ./scripts/deploy.sh"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                bat """
+                powershell -Command "Start-Sleep -Seconds 5; \$response = Invoke-WebRequest -UseBasicParsing http://%EC2_PUBLIC_IP%/; if (\$response.StatusCode -ne 200) { exit 1 }"
+                """
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'CI/CD Pipeline completed successfully. Application deployed.'
+        }
+
+        failure {
+            echo 'Pipeline failed. Check the failed stage logs.'
+        }
+    }
+}
