@@ -100,20 +100,34 @@ pipeline {
             }
         }
 
-        stage('Deploy Application to EC2') {
-            steps {
-                withCredentials([
-                    string(credentialsId: 'db-user', variable: 'DB_USER'),
-                    string(credentialsId: 'db-password', variable: 'DB_PASSWORD')
-                ]) {
-                    sshagent(['ec2-ssh-key']) {
-                        bat """
-                            ssh -o StrictHostKeyChecking=no ubuntu@%EC2_PUBLIC_IP% "echo connected"
-                        """
-                    }
-                }
-            }
+       stage('Deploy Application to EC2') {
+    steps {
+        withCredentials([
+            string(credentialsId: 'db-user', variable: 'DB_USER'),
+            string(credentialsId: 'db-password', variable: 'DB_PASSWORD'),
+            sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
+        ]) {
+            powershell """
+                # Copy key to temp location
+                \$tempKey = "\$env:TEMP\\ec2_key_\$env:BUILD_NUMBER.pem"
+                Copy-Item "\$env:SSH_KEY_FILE" \$tempKey
+
+                # Fix permissions - remove all, grant only current user
+                icacls \$tempKey /inheritance:r | Out-Null
+                icacls \$tempKey /remove "Everyone" | Out-Null
+                icacls \$tempKey /remove "BUILTIN\\Users" | Out-Null
+                icacls \$tempKey /grant:r "\$env:USERNAME:(R)" | Out-Null
+                icacls \$tempKey /grant:r "NT AUTHORITY\\SYSTEM:(R)" | Out-Null
+
+                # Test SSH connection
+                ssh -o StrictHostKeyChecking=no -i \$tempKey ubuntu@\$env:EC2_PUBLIC_IP 'echo connected'
+
+                # Cleanup
+                Remove-Item \$tempKey -Force
+            """
         }
+    }
+}
 
         stage('Health Check') {
             steps {
