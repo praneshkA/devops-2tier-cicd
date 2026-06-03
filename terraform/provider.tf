@@ -3,7 +3,7 @@ terraform {
     bucket         = "devops-2tier-tfstate-praneshka"
     key            = "devops-2tier-cicd/terraform.tfstate"
     region         = "ap-south-1"
-    dynamodb_table = "devops-terraform-locks"
+   use_lockfile = true
     encrypt        = true
   }
 
