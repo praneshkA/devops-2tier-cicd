@@ -100,30 +100,34 @@ pipeline {
             }
         }
 
-       stage('Deploy Application to EC2') {
+      stage('Deploy Application to EC2') {
     steps {
         withCredentials([
             string(credentialsId: 'db-user', variable: 'DB_USER'),
-            string(credentialsId: 'db-password', variable: 'DB_PASSWORD'),
-            sshUserPrivateKey(credentialsId: 'ec2-ssh-key', keyFileVariable: 'SSH_KEY_FILE', usernameVariable: 'SSH_USER')
+            string(credentialsId: 'db-password', variable: 'DB_PASSWORD')
         ]) {
             powershell """
-                # Copy key to temp location
-                \$tempKey = "\$env:TEMP\\ec2_key_\$env:BUILD_NUMBER.pem"
-                Copy-Item "\$env:SSH_KEY_FILE" \$tempKey
+                \$keyPath = "C:\\ProgramData\\Jenkins\\.jenkins\\keys\\devops-key"
+                \$ip = "\$env:EC2_PUBLIC_IP"
 
-                # Fix permissions - remove all, grant only current user
-                icacls \$tempKey /inheritance:r | Out-Null
-                icacls \$tempKey /remove "Everyone" | Out-Null
-                icacls \$tempKey /remove "BUILTIN\\Users" | Out-Null
-                icacls \$tempKey /grant:r "\$env:USERNAME:(R)" | Out-Null
-                icacls \$tempKey /grant:r "NT AUTHORITY\\SYSTEM:(R)" | Out-Null
+                # Fix permissions silently
+                & icacls \$keyPath /inheritance:r 2>\$null
+                & icacls \$keyPath /remove:g "BUILTIN\\Users" 2>\$null
+                & icacls \$keyPath /remove:g "Everyone" 2>\$null
+                & icacls \$keyPath /remove:g "NT AUTHORITY\\Authenticated Users" 2>\$null
+                & icacls \$keyPath /grant:r "NT AUTHORITY\\SYSTEM:(R)" 2>\$null
+                & icacls \$keyPath /grant:r "BUILTIN\\Administrators:(R)" 2>\$null
 
-                # Test SSH connection
-                ssh -o StrictHostKeyChecking=no -i \$tempKey ubuntu@\$env:EC2_PUBLIC_IP 'echo connected'
+                Write-Host "Key permissions set. Testing SSH..."
 
-                # Cleanup
-                Remove-Item \$tempKey -Force
+                # Test SSH
+                \$result = & ssh -o StrictHostKeyChecking=no -i \$keyPath ubuntu@\$ip "echo connected" 2>&1
+                Write-Host \$result
+
+                if (\$LASTEXITCODE -ne 0) {
+                    Write-Error "SSH connection failed"
+                    exit 1
+                }
             """
         }
     }
