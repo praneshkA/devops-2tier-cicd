@@ -133,13 +133,13 @@ pipeline {
     }
 }
 
-        stage('Health Check') {
-            steps {
-                bat '''
-                powershell -NoProfile -Command "Start-Sleep -Seconds 10; try { Invoke-WebRequest -UseBasicParsing http://%EC2_PUBLIC_IP%/ | Out-Null; exit 0 } catch { exit 1 }"
-                '''
-            }
-        }
+     stage('Health Check') {
+    steps {
+        bat '''
+        powershell -NoProfile -Command "Start-Sleep -Seconds 10; $response = Invoke-WebRequest -UseBasicParsing http://%EC2_PUBLIC_IP%/; if ($response.Content -notmatch 'Employee Management System') { Write-Error 'Employee app not found in response'; exit 1 }"
+        '''
+    }
+}
     }
 
     post {
