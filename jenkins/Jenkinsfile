@@ -132,4 +132,3 @@ ssh -o StrictHostKeyChecking=no -i "C:\\ProgramData\\Jenkins\\.jenkins\\keys\\de
             echo 'Pipeline failed. Check the failed stage logs.'
         }
     }
-}
